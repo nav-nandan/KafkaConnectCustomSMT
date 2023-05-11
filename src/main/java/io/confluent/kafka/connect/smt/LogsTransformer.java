@@ -46,8 +46,7 @@ public abstract class LogsTransformer<R extends ConnectRecord<R>> implements Tra
 
     schemaUpdateCache = new SynchronizedCache<>(new LRUCache<Schema, Schema>(16));
   }
-
-
+  
   @Override
   public R apply(R record) {
     if (operatingSchema(record) == null) {
@@ -56,35 +55,55 @@ public abstract class LogsTransformer<R extends ConnectRecord<R>> implements Tra
       return applyWithSchema(record);
     }
   }
+  
+  private Map<String, Object> transformLogs(final String message) {
+
+	  String split[] = message.split("ip=|\"clientIp\":|\"serviceID\":|\"functionalMap\":");
+		
+	  String host = split[1].split(" ")[0].replace("\"", "");
+	  String clientIp = split[4].split(",")[0].replace("\"", "");
+	  String serviceID = split[2].split(" ")[0].replace("\"", "").replace(",", "");
+	  String functionalMap = split[3].split(",")[0].replace("\"", "");
+		
+	  Map<String, Object> updatedRecord = new HashMap<String, Object>();
+		
+	  Map<String, Object> _source = new HashMap<String, Object>();
+	  _source.put("host", host);
+	  _source.put("clientIp", clientIp);
+	  _source.put("serviceID", serviceID);
+	  _source.put("functionalMap", functionalMap);
+	  _source.put("message", message);
+		
+	  updatedRecord.put("_source", _source);
+	  updatedRecord.put("_type", "_doc");
+	  updatedRecord.put("_version", 1);
+	  updatedRecord.put("_score", 1);
+		
+	  updatedRecord.put("_index", fieldName);
+	  
+	  return updatedRecord;
+  }
 
   private R applySchemaless(R record) {
+	
     final Map<String, Object> value = requireMap(operatingValue(record), PURPOSE);
+    
+    String message = (String) value.get("message");
+	
+	Map<String, Object> updatedRecord = transformLogs(message);
 
-    final Map<String, Object> updatedValue = new HashMap<>(value);
-
-    updatedValue.put("_index", fieldName);
-
-    return newRecord(record, null, updatedValue);
+    return newRecord(record, null, updatedRecord);
   }
 
   private R applyWithSchema(R record) {
+	
     final Struct value = requireStruct(operatingValue(record), PURPOSE);
+    
+    String message = (String) value.get("message");
+    
+    Map<String, Object> updatedRecord = transformLogs(message);
 
-    Schema updatedSchema = schemaUpdateCache.get(value.schema());
-    if(updatedSchema == null) {
-      updatedSchema = makeUpdatedSchema(value.schema());
-      schemaUpdateCache.put(value.schema(), updatedSchema);
-    }
-
-    final Struct updatedValue = new Struct(updatedSchema);
-
-    for (Field field : value.schema().fields()) {
-      updatedValue.put(field.name(), value.get(field));
-    }
-
-    updatedValue.put("_index", fieldName);
-
-    return newRecord(record, updatedSchema, updatedValue);
+    return newRecord(record, null, updatedRecord);
   }
 
   @Override
@@ -131,7 +150,6 @@ public abstract class LogsTransformer<R extends ConnectRecord<R>> implements Tra
     protected R newRecord(R record, Schema updatedSchema, Object updatedValue) {
       return record.newRecord(record.topic(), record.kafkaPartition(), updatedSchema, updatedValue, record.valueSchema(), record.value(), record.timestamp());
     }
-
   }
 
   public static class Value<R extends ConnectRecord<R>> extends LogsTransformer<R> {
